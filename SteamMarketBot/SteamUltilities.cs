@@ -1,0 +1,1002 @@
+﻿/*using System;
+using System.Collections.Generic;
+using System.Text;
+using System.Net;
+using System.Security.Cryptography;
+using System.Windows.Forms;
+using System.Text.RegularExpressions;
+using Newtonsoft.Json;
+
+namespace SteamMarketBot
+{
+    public partial class SteamSite
+    {
+        //================================ Consts ======================= Begin! ============================================
+
+        public const string _host = "steamcommunity.com";
+        public const string _mainsite = "http://" + _host + "/";
+        public const string _mainsiteS = "https://" + _host + "/";
+
+        const string _comlog = "https://" + _host + "/login/";
+        const string _ref = _comlog + "home/?goto=market%2F";
+        const string _getrsa = _comlog + "getrsakey/";
+        const string _dologin = _comlog + "dologin/";
+        const string _logout = _comlog + "logout/";
+        public const string _market = _mainsite + "market/";
+        //const string _blist = _market + "buylisting/";
+        //FIX
+
+        const string _blist = _mainsiteS + "market/buylisting/";
+
+        public const string _lists = _market + "listings/";
+
+
+        //Todo: JSON
+        public const string _search = _market + "search/render/?query={0}&start={1}&count={2}";
+        //public const string _search = _market + "search?q=";
+
+
+        const string _capcha = "https://" + _host + "/public/captcha.php?gid=";
+        const string _refrcap = "https://" + _host + "/actions/RefreshCaptcha/?count=1";
+
+        const string _lang_chg = _market + "?l=";
+
+        const string loginReq = "password={0}&username={1}&emailauth={2}&loginfriendlyname={3}&captchagid={4}&captcha_text={5}&emailsteamid={6}&rsatimestamp={7}";
+        const string loginStr = "steamid={0}&token={1}&remember_login=false&webcookie={2}";
+        //Currency FIX
+        //1 = USD, 2 = GBP, 3 = EUR, 5 = RUB
+        const string buyReq = "sessionid={0}&currency={4}&subtotal={1}&fee={2}&total={3}&quantity={5}";
+
+        //New url format
+        //const string _jsonInv = _mainsite + "id/{0}/inventory/json/{1}";
+        //Old Url format, recommended
+        const string _jsonInv = _mainsite + "profiles/{0}/inventory/json/{1}";
+
+        //Fix
+        public const string imgUri = "http://steamcommunity-a.akamaihd.net/economy/image/";
+
+        //public const string invImgUrl = imgUri + "{0}/96fx96f";
+        public const string fndImgUrl = imgUri + "{0}/62fx62f";
+        public const string _sellitem = _mainsiteS + "market/sellitem/";
+        public const string sellReq = "sessionid={0}&appid={1}&contextid={2}&assetid={3}&amount=1&price={4}";
+        public const string removeSell = _market + "removelisting/";
+
+        public const string searchPageReq = "{0}&start={1}0";
+
+        public const string recentMarket = _market + "recent/";
+
+        //New, update fix
+        public const string priceOverview = _market + "priceoverview/?currency={0}&appid={1}&market_hash_name={2}";
+        public const string jsonAddonUrl = "?country={0}&language={1}&currency={2}";
+
+        //For html parsing, bulding own json!
+        public string buildJson = "\"success\":true,\"results_html\":\"\",\"listinginfo\":{0},\"assets\":{1}";
+
+        //================================ Consts ======================= End ===============================================
+
+        public event eventDelegate delegMessage;
+
+        private List<ScanItem> lotList = new List<ScanItem>();
+        public List<SearchItem> searchList = new List<SearchItem>();
+        public List<InventItem> inventList = new List<InventItem>();
+        public static List<TrackingItem> trackinglist = new List<TrackingItem>();
+
+        public class ScanItem
+        {
+            public ScanItem(string listringId, int price, int fee, AppType appType, string itemName)
+            {
+                this.ListringId = listringId;
+                this.Price = price;
+                this.Fee = fee;
+                this.Type = appType;
+                this.ItemName = itemName;
+            }
+
+            public string ListringId { set; get; }
+            public int Price { set; get; }
+            public int Fee { set; get; }
+            public AppType Type { set; get; }
+            public string ItemName { set; get; }
+        }
+
+
+        public class InventItem
+        {
+            public InventItem(string assetid, string name, string type, string price, string imglink, string marketName, bool onSale, bool marketable, string pageLink)
+            {
+                this.Name = name;
+                this.AssetId = assetid;
+                this.Type = type;
+                this.Price = price;
+                this.ImgLink = imglink;
+                this.OnSale = onSale;
+                this.MarketName = marketName;
+                this.PageLnk = pageLink;
+                //Dummy
+                this.Marketable = marketable;
+            }
+
+            public string Name { set; get; }
+            public string ImgLink { set; get; }
+            public string Price { set; get; }
+            public string Type { set; get; }
+            public string AssetId { set; get; }
+            public string MarketName { set; get; }
+            public bool OnSale { set; get; }
+            public string PageLnk { set; get; }
+
+            //Dummy
+            public bool Marketable { set; get; }
+        }
+
+        public class BuyResponse
+        {
+            public BuyResponse(bool succsess, string mess)
+            {
+                this.Succsess = succsess;
+                this.Mess = mess;
+            }
+
+            public bool Succsess { set; get; }
+            public string Mess { set; get; }
+        }
+
+        public class TrackingItem
+        {
+            public int HashCode { get; set; }
+            public string Name { set; get; }
+            public string Game { set; get; }
+            public double StartPrice { set; get; }
+            public double MedianPrice { set; get; }
+            public int BuyPercent { set; get; }
+            public int SellPercent { set; get; }
+            public bool Buy { set; get; }
+            public bool Sell { set; get; }
+            public bool Purchased { set; get; }
+            public string link { get; set; }
+            public double purprice { get; set; }
+
+            public System.Timers.Timer Refresh;
+            public bool buying = false;
+
+            public TrackingItem(int Hashcode, string Name, string Game, double StartPrice, double MedianPrice, int BuyPercent, 
+                int SellPercent, bool Buy, bool Sell, bool Purchased, string link, double PurPrice)
+            {
+                this.HashCode = Hashcode;
+                this.Name = Name;
+                this.Game = Game;
+                this.StartPrice = StartPrice;
+                this.MedianPrice = MedianPrice;
+                this.BuyPercent = BuyPercent;
+                this.SellPercent = SellPercent;
+                this.Buy = Buy;
+                this.Sell = Sell;
+                this.Purchased = Purchased;
+                this.link = link;
+                this.purprice = PurPrice;
+            }
+        }
+
+        public class SearchItem
+        {
+            public string Name { set; get; }
+            public string Game { set; get; }
+            public string Link { set; get; }
+            public string ImgLink { set; get; }
+            public string Quant { set; get; }
+            public string StartPrice { set; get; }
+            public string MedianPrice { set; get; }
+
+            public SearchItem(string name, string game, string link, string quant, string startprice, string imglink, string MedianPrice)
+            {
+                this.Name = name;
+                this.Game = game;
+                this.Link = link;
+                this.Quant = quant;
+                this.StartPrice = startprice;
+                this.ImgLink = imglink;
+                this.MedianPrice = MedianPrice;
+            }           
+        }
+
+        //JSON Stuff...
+
+        public class RespRSA
+        {
+
+            [JsonProperty("success")]
+            public bool Success { get; set; }
+
+            [JsonProperty("publickey_mod")]
+            public string Module { get; set; }
+
+            [JsonProperty("publickey_exp")]
+            public string Exponent { get; set; }
+
+            [JsonProperty("timestamp")]
+            public string TimeStamp { get; set; }
+        }
+
+        public class RespProcess
+        {
+            [JsonProperty("success")]
+            public bool Success { get; set; }
+
+            [JsonProperty("emailauth_needed")]
+            public bool isEmail { get; set; }
+
+            [JsonProperty("captcha_needed")]
+            public bool isCaptcha { get; set; }
+
+            [JsonProperty("message")]
+            public string Message { get; set; }
+
+            [JsonProperty("captcha_gid")]
+            public string Captcha_Id { get; set; }
+
+            [JsonProperty("emailsteamid")]
+            public string Email_Id { get; set; }
+
+            [JsonProperty("bad_captcha")]
+            public bool isBadCap { get; set; }
+        }
+
+        public class RespFinal
+        {
+            [JsonProperty("success")]
+            public bool Success { get; set; }
+
+            [JsonProperty("login_complete")]
+            public bool isComplete { get; set; }
+        }
+
+        public class InventoryData
+        {
+            [JsonProperty("rgInventory")]
+            public IDictionary<string, InvItem> myInvent { get; set; }
+
+            [JsonProperty("rgDescriptions")]
+            public IDictionary<string, ItemDescr> invDescr { get; set; }
+        }
+
+        public class InvItem
+        {
+            [JsonProperty("id")]
+            public string assetid { get; set; }
+
+            [JsonProperty("classid")]
+            public string classid { get; set; }
+
+            //Fixed
+            [JsonProperty("instanceid")]
+            public string instanceid { get; set; }
+        }
+
+
+        public class ItemDescr
+        {
+            //Fix for Resell feature
+            [JsonProperty("market_name")]
+            public string Name { get; set; }
+
+            [JsonProperty("name")]
+            public string SimpleName { get; set; }
+
+            [JsonProperty("icon_url")]
+            public string IconUrl { get; set; }
+
+            [JsonProperty("type")]
+            public string Type { get; set; }
+
+            [JsonProperty("market_hash_name")]
+            public string MarketName { get; set; }
+
+            [JsonProperty("marketable")]
+            public bool Marketable { get; set; }
+
+            //New
+            [JsonProperty("appid")]
+            public string AppId { get; set; }
+        }
+
+        public class InfoMessage
+        {
+            [JsonProperty("message")]
+            public string Message { get; set; }
+        }
+
+        public class WalletInfo
+        {
+            [JsonProperty("wallet_info")]
+            public Wallet WalletRes { get; set; }
+        }
+
+        public class Wallet
+        {
+            [JsonProperty("wallet_balance")]
+            public string Balance { get; set; }
+            [JsonProperty("success")]
+            public int Success { get; set; }
+        }
+
+        public class PageBody
+        {
+            [JsonProperty("success")]
+            public bool Success { get; set; }
+            [JsonProperty("results_html")]
+            public string HtmlRes { get; set; }
+
+            [JsonProperty(PropertyName = "listinginfo", Required = Required.Default)]
+            public IDictionary<string, ListingInfo> Listing { get; set; }
+
+            [JsonProperty("assets")]
+            public IDictionary<string, IDictionary<string, IDictionary<string, ItemInfo>>> Assets { get; set; }
+        }
+
+        public class ListingInfo
+        {
+            [JsonProperty("listingid")]
+            public string listingid { get; set; }
+
+            [JsonProperty("converted_price")]
+            public int price { get; set; }
+
+            [JsonProperty("converted_fee")]
+            public int fee { get; set; }
+
+            [JsonProperty("asset")]
+            public ItemAsset asset { get; set; }
+
+            [JsonProperty("steamid_lister")]
+            public string userId { get; set; }
+        }
+
+        public class ItemAsset
+        {
+            [JsonProperty("appid")]
+            public string appid { get; set; }
+
+            [JsonProperty("contextid")]
+            public string contextid { get; set; }
+
+            [JsonProperty("id")]
+            public string id { get; set; }
+        }
+
+        public class Assets
+        {
+            [JsonProperty(PropertyName = "listinginfo", Required = Required.Default)]
+            public IDictionary<string, ListingInfo> Listing { get; set; }
+
+            [JsonProperty("converted_fee")]
+            public string fee { get; set; }
+
+            [JsonProperty("asset")]
+            public ItemAsset asset { get; set; }
+        }
+
+        public class ItemInfo
+        {
+            [JsonProperty("market_name")]
+            public string name { get; set; }
+
+            [JsonProperty(PropertyName = "fraudwarnings", Required = Required.Default)]
+            public object warnings { get; set; }
+
+            //Not Useful Yet...
+            [JsonProperty("type")]
+            public string type { get; set; }
+
+            [JsonProperty("tradable")]
+            public bool tradable { get; set; }
+
+            [JsonProperty("icon_url")]
+            public string icon_url { get; set; }
+        }
+
+        public class SearchBody
+        {
+            [JsonProperty("success")]
+            public bool Success { get; set; }
+            [JsonProperty("results_html")]
+            public string HtmlRes { get; set; }
+            [JsonProperty("total_count")]
+            public string TotalCount { get; set; }
+        }
+
+        public class PriceOverview
+        {
+            [JsonProperty("success")]
+            public bool Success { get; set; }
+            [JsonProperty("lowest_price")]
+            public string Lowest { get; set; }
+            [JsonProperty("volume")]
+            public string Volume { get; set; }
+            [JsonProperty("median_price")]
+            public string Median { get; set; }
+        }
+
+
+        //End JSON
+
+        protected void doMessage(flag myflag, int searchId, object message, bool isMain)
+        {
+            try
+            {
+                if (delegMessage != null)
+                {
+                    Control target = delegMessage.Target as Control;
+
+                    if (target != null && target.InvokeRequired)
+                    {                        
+                        target.Invoke(delegMessage, new object[] { this, message, searchId, myflag, isMain });
+                    }
+                    else
+                    {
+                        delegMessage(this, message, searchId, myflag, isMain);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Main.AddtoLog(e.Message);
+            }
+        }
+
+        private string SendPost(string data, string url, string refer, bool tolog)
+        {
+            Main.reqPool.WaitOne();
+
+            //doMessage(flag.StripImg, 0, string.Empty, true);
+            var res = Main.SendPostRequest(data, url, refer, cookieCont, tolog);
+            //doMessage(flag.StripImg, 1, string.Empty, true);
+
+            Main.reqPool.Release();
+
+            return res;
+        }
+
+        public string SendGet(string url, CookieContainer cok, bool UseProxy, bool keepAlive)
+        {
+            Main.reqPool.WaitOne();
+
+            var res = Main.GetRequest(url, cookieCont, UseProxy, keepAlive);
+
+            if (Main.ReqDelay > 0)
+                Main.reqPool.WaitOne(Main.ReqDelay);
+
+            Main.reqPool.Release();
+
+            return res;
+        }
+
+        static byte[] HexToByte(string hex)
+        {
+            if (hex.Length % 2 == 1)
+            {
+                Main.AddtoLog("HexToByte: The binary key cannot have an odd number of digits");
+                return null;
+            }
+
+            byte[] arr = new byte[hex.Length >> 1];
+            int l = hex.Length;
+
+            for (int i = 0; i < (l >> 1); ++i)
+            {
+                arr[i] = (byte)((GetHexVal(hex[i << 1]) << 4) + (GetHexVal(hex[(i << 1) + 1])));
+            }
+
+            return arr;
+        }
+
+        static int GetHexVal(char hex)
+        {
+            int val = (int)hex;
+            return val - (val < 58 ? 48 : 55);
+        }
+
+
+        public static string GetSweetPrice(string input)
+        {
+            string res = string.Empty;
+
+            var match = input.IndexOfAny(".,".ToCharArray());
+
+            if ((match == -1) | (match == input.Length - 1))
+            {
+                res = input + "00";
+            }
+            else
+            {
+                if (input.Length > match + 3)
+                {
+                    res = input.Substring(0, match + 3);
+                }
+                else
+                    if (input.Length == match)
+                    {
+                        res = input + "00";
+                    }
+                    else if (input.Length == match + 2)
+                    {
+                        res = input + "0";
+                    }
+                    else res = input;
+            }
+            return Regex.Replace(res, @"[d\.\,]+", string.Empty);
+        }
+
+        public static string EncryptPassword(string password, string modval, string expval)
+        {
+            RSACryptoServiceProvider rsa = new RSACryptoServiceProvider();
+            RSAParameters rsaParams = new RSAParameters();
+            rsaParams.Modulus = HexToByte(modval);
+            rsaParams.Exponent = HexToByte(expval);
+            rsa.ImportParameters(rsaParams);
+
+            byte[] bytePassword = Encoding.ASCII.GetBytes(password);
+            byte[] encodedPassword = rsa.Encrypt(bytePassword, false);
+            string encryptedPass = Convert.ToBase64String(encodedPassword);
+
+            return Uri.EscapeDataString(encryptedPass);
+        }
+
+
+        //steam utils
+
+        public static AppType GetUrlApp(int appIndx, bool isGetInv)
+        {
+            string app = "753";
+            string cont = "6";
+
+            switch (appIndx)
+            {
+                case 0: //Trading Cards
+                    app = "753";
+                    cont = "6";
+                    break;
+                case 1:  //TF2
+                    app = "440";
+                    cont = "2";
+                    break;
+                case 2:  //DOTA2
+                    app = "570";
+                    cont = "2";
+                    break;
+                case 3: //CS:GO
+                    app = "730";
+                    cont = "2";
+                    break;
+                case 4: //BattleBlock Theater
+                    app = "238460";
+                    cont = "2";
+                    break;
+                case 5: //Warframe
+                    app = "230410";
+                    cont = "2";
+                    break;
+                case 6: //Sins of a Dark Age
+                    app = "251970";
+                    cont = "1";
+                    break;
+                case 7: //Path of Exile
+                    app = "238960";
+                    cont = "1";
+                    break;
+            }
+            if (isGetInv)
+                return new AppType(string.Format("{0}/{1}", app, cont), string.Empty);
+            else return new AppType(app, cont);
+        }
+
+        public StrParam GetNameBalance(CookieContainer cock)
+        {
+            Main.AddtoLog("Getting account name and balance...");
+
+            string markpage = SendGet(_market, cock, false, true);
+
+            //For testring purposes!
+            //string markpage = System.IO.File.ReadAllText(@"C:\sing.htm");
+
+            //Fix to getting name regex
+            string parseName = Regex.Match(markpage, "(?<=buynow_dialog_myaccountname\">)(.*)(?=</span>)").ToString().Trim();
+            if (parseName == "")
+            {
+                return null;
+            }
+
+            //accName = parseName;
+            //Set profileId for old Url format
+            myUserId = Regex.Match(markpage, "(?<=g_steamID = \")(.*)(?=\";)").ToString();
+
+            //30.05.14 Update
+            string parseImg = Regex.Match(markpage, "(?<=avatarIcon\"><img src=\")(.*)(?=\" alt=\"\"></span>)", RegexOptions.Singleline).ToString();
+
+            string parseAmount = Regex.Match(markpage, "(?<=marketWalletBalanceAmount\">)(.*)(?=</span>)").ToString();
+
+            string country = Regex.Match(markpage, "(?<=g_strCountryCode = \")(.*)(?=\";)").ToString();
+            string strlang = Regex.Match(markpage, "(?<=g_strLanguage = \")(.*)(?=\";)").ToString();
+
+            Main.currencies.GetType(parseAmount);
+
+            parseAmount = Main.currencies.ReplaceAscii(parseAmount);
+
+            //?country=RU&language=russian&currency=5&count=20
+            string Addon = string.Format(jsonAddonUrl, country, strlang, Main.currencies.GetCode());
+
+            return new StrParam(parseName, parseAmount, parseImg, Addon);
+        }
+
+        public static string GetSessId(CookieContainer coock)
+        {
+            //sessid sample MTMyMTg5MTk5Mw%3D%3D
+            string resId = string.Empty;
+            var stcook = coock.GetCookies(new Uri(_mainsite));
+
+            for (int i = 0; i < stcook.Count; i++)
+            {
+                string cookname = stcook[i].Name.ToString();
+
+                if (cookname == "sessionid")
+                {
+                    resId = stcook[i].Value.ToString();
+                    break;
+                }
+            }
+            return resId;
+        }       
+
+        private static bool isStillLogged(CookieContainer cook)
+        {
+            var stcook = cook.GetCookies(new Uri(_mainsite));
+
+            for (int i = 0; i < stcook.Count; i++)
+            {
+                if (stcook[i].Name.Contains("steamLogin"))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public byte ParseLotList(string content, List<ScanItem> lst, bool full, bool ismain)
+        {
+
+            lst.Clear();
+
+            //Smart ass!
+            if (Main.isHTML && ismain)
+            {
+                string jsonAssets = Regex.Match(content, @"(?<=g_rgAssets \= )(.*)(?=;
+	var g_rgCurrency)", RegexOptions.Singleline).ToString();
+
+                if (jsonAssets == string.Empty)
+                    return 6;
+
+                string jsonListInfo = Regex.Match(content, @"(?<=g_rgListingInfo \= )(.*)(?=;
+	var g_plotPriceHistory)", RegexOptions.Singleline).ToString();
+
+                content = "{" + string.Format(buildJson, jsonListInfo, jsonAssets) + "}";
+            }
+            else
+            {
+                if (content == string.Empty)
+                {
+                    //Content empty
+                    return 0;
+                }
+                else if (content == "403")
+                {
+                    //403 Forbidden
+                    return 5;
+                }
+                else if (content.Length < 40)
+                {
+                    //Move along
+                    return 8;
+                }
+                else if (content[0] != '{')
+                {
+                    //Json is not valid
+                    return 2;
+                }
+            }
+            try
+            {
+                //"success":false
+                if (content.Substring(11, 1) == "f")
+                    return 1;
+
+                var pageJS = JsonConvert.DeserializeObject<PageBody>(content);
+
+                if (pageJS.Listing.Count != 0)
+                {
+                    foreach (ListingInfo ourItem in pageJS.Listing.Values)
+                    {
+                        var ourItemInfo = pageJS.Assets[ourItem.asset.appid][ourItem.asset.contextid][ourItem.asset.id];
+
+                        bool isNull = false;
+                        if (ourItem.userId == myUserId)
+                        {
+                            continue;
+                        }
+                        if ((IgnoreWarn) && (ourItemInfo.warnings != null))
+                        {
+                            //Renamed Item or Descriprtion
+                            Main.AddtoLog(string.Format("{0}: {1}", ourItemInfo.name, ourItemInfo.warnings.ToString()));
+                            continue;
+                        }
+                        if (ourItem.price != 0)
+                        {
+                            if (NotSetHead && !full)
+                            {
+                                //doMessage(flag.SetHeadName, scanID, new StrParam(ourItemInfo.name, ourItemInfo.icon_url), true);
+                                scanInput.Name = ourItemInfo.name;
+                                NotSetHead = false;
+                            }
+                            lst.Add(new ScanItem(ourItem.listingid, ourItem.price, ourItem.fee, new AppType(ourItem.asset.appid, ourItem.asset.contextid), ourItemInfo.name));
+                            isNull = false;
+                        }
+                        else
+                        {
+                            isNull = true;
+                        }
+                        if (!full && !isNull)
+                            return 7;
+                    }
+                }
+                else return 1;
+            }
+            catch (Exception e)
+            {
+                //Parsing fail
+                Main.AddtoLog("Err Source: " + e.Message);
+                return 3;
+            }
+
+            if (lst.Count == 0)
+                return 0;
+            else
+                //Fine!
+                return 7;
+        }
+
+        public static string ParseSearchRes(string content, List<SearchItem> lst, SteamSite steam_srch)
+        {
+            lst.Clear();
+            string totalFind = "0";
+
+            try
+            {
+                var searchJS = JsonConvert.DeserializeObject<SearchBody>(content);
+
+                if (searchJS.Success)
+                {
+                    totalFind = searchJS.TotalCount;
+
+                    //content = File.ReadAllText(@"C:\dollar2.html");
+                    MatchCollection matches = Regex.Matches(searchJS.HtmlRes, "(?<=market_listing_row_link\" href)(.*?)(?<=</a>)", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline);
+                    if (matches.Count != 0)
+                    {
+
+                        foreach (Match match in matches)
+                        {
+                            string currmatch = match.Groups[1].Value;
+
+                            //Fix for Steam update 5/01/14 4:00 PM PST
+                            string ItemUrl = Regex.Match(currmatch, "(?<==\")(.*)(?=\" id)").ToString();
+
+                            string ItemQuan = Regex.Match(currmatch, "(?<=num_listings_qty\">)(.*)(?=</span>)").ToString();
+
+                            //Fix for Steam update 3/26/14 4:00 PM PST
+                            string ItemPrice = Regex.Match(currmatch, "(?<=<span style=\"color:)(.*)(?=<div class=\"market_listing_right_cell)", RegexOptions.Singleline).ToString();
+
+                            if (Main.currencies.NotSet)
+                            {
+                                Main.currencies.GetType(ItemPrice);
+                                //If not loggen in then
+                                ItemPrice = Regex.Replace(ItemPrice, Main.currencies.GetAscii(), string.Empty);
+                                //currLst.NotSet = true;
+                            }
+                            else
+                            {
+                                ItemPrice = Regex.Replace(ItemPrice, Main.currencies.GetAscii(), string.Empty);
+                            }
+
+                            ItemPrice = Regex.Replace(ItemPrice, @"[^\d\,\.]+", string.Empty);
+
+                            //Fix fot Steam update 3/26/14 4:00 PM PST
+                            string ItemName = Regex.Match(currmatch, "(?<=listing_item_name\" style=\"color:)(.*)(?=</span>)").ToString();
+                            ItemName = ItemName.Remove(0, ItemName.IndexOf(">") + 1);
+
+                            string ItemGame = Regex.Match(currmatch, "(?<=game_name\">)(.*)(?=</span>)").ToString();
+
+                            string GameID = GetApp(ItemGame);
+
+                            string Median = "0 " + Main.currencies.GetName();
+
+                            if (!GameID.Equals("753"))
+                            {
+                                try
+                                {
+                                    var priceOver = JsonConvert.DeserializeObject<PriceOverview>(steam_srch.SendGet(string.Format(priceOverview, GetCurrenyID(Main.currencies.GetName()), GameID, ItemName), steam_srch.cookieCont, false, true));
+
+                                    if (priceOver.Success)
+                                    {
+                                        Median = priceOver.Median.Split(';')[1] + " " + Main.currencies.GetName();
+                                    }
+                                }
+                                catch
+                                {
+                                    Median = "0 " + Main.currencies.GetName();
+                                }
+                            }
+
+                            string ItemImg = Regex.Match(currmatch, "(?<=net/economy/image/)(.*)(/62fx62f)", RegexOptions.Singleline).ToString();
+
+                            lst.Add(new SearchItem(ItemName, ItemGame, ItemUrl, ItemQuan, ItemPrice, ItemImg, Median));
+                        }
+                    }
+                    else
+                        MessageBox.Show("No item founded!", "Attention", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+            catch (Exception e)
+            {
+                Main.AddtoLog(e.Message);
+                MessageBox.Show("Error parsing search results.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+
+            return totalFind;
+        }
+
+        public static string GetCurrenyID(string currency)
+        {
+            string ID = "";
+            switch (currency)
+            {
+                case "$":
+                    ID = "1";
+                    break;
+                case "£":
+                    ID = "2";
+                    break;
+                case "3":
+                    ID = "3";
+                    break;
+            }
+            return ID;
+        }
+
+        public static string GetApp(string appname)
+        {
+            int apptype = 753;
+
+            switch (appname)
+            {
+                case "Dota 2":
+                    apptype = 570;
+                    break;
+                case "Counter-Strike: Global Offensive":
+                    apptype = 730;
+                    break;
+                case "BattleBlock Theater":
+                    apptype = 238460;
+                    break;
+                case "Team Fortress 2":
+                    apptype = 440;
+                    break;
+                case "Warframe":
+                    apptype = 230410;
+                    break;
+                case "The Mighty Quest For Epic Loot":
+                    apptype = 239220;
+                    break;
+                case "Sins of a Dark Age":
+                    apptype = 251970;
+                    break;
+                case "Primal Carnage: Extinction":
+                    apptype = 321360;
+                    break;
+                case "Path of Exile":
+                    apptype = 238960;
+                    break;
+                case "Minimum":
+                    apptype = 214190;
+                    break;
+                case "Altitude0: Lower & Faster":
+                    apptype = 308080;
+                    break;
+            }
+            return (apptype.ToString());
+        }
+
+        //Fixed
+        public int ParseInventory(string content)
+        {
+            inventList.Clear();
+
+            try
+            {
+                var rgDescr = JsonConvert.DeserializeObject<InventoryData>(content);
+
+                foreach (InvItem prop in rgDescr.myInvent.Values)
+                {
+                    var ourItem = rgDescr.invDescr[prop.classid + "_" + prop.instanceid];
+
+                    //parse cost by url (_lists + 753/ + ourItem.MarketName)
+                    string price = "0";
+
+                    if (!ourItem.Marketable)
+                        price = "1";
+
+                    //fix for special symbols in Item Name
+                    string markname = string.Empty;
+
+                    if ((ourItem.MarketName == null) && (ourItem.Name == string.Empty))
+                    {
+                        ourItem.Name = ourItem.SimpleName;
+                        ourItem.MarketName = ourItem.SimpleName;
+                    }
+
+                    //BattleBlock Theater Fix
+                    markname = Uri.EscapeDataString(ourItem.MarketName);
+                    string pageLnk = string.Format("{0}/{1}/{2}", _lists, ourItem.AppId, markname);
+
+                    inventList.Add(new InventItem(prop.assetid, ourItem.Name, ourItem.Type, price, ourItem.IconUrl, ourItem.MarketName, false, ourItem.Marketable, pageLnk));
+                }
+            }
+            catch (Exception e)
+            {
+                Main.AddtoLog(e.Message);
+            }
+
+            return inventList.Count;
+        }
+
+        public int ParseOnSale(string content)
+        {
+            inventList.Clear();
+            string parseBody = Regex.Match(content, "(?<=section market_home_listing_table\">)(.*)(?=<div id=\"tabContentsMyMarketHistory)", RegexOptions.Singleline).ToString();
+
+            MatchCollection matches = Regex.Matches(parseBody, "(?<=market_recent_listing_row listing_)(.*?)(?=	</div>\r\n</div>)", RegexOptions.Singleline);
+            if (matches.Count != 0)
+            {
+                foreach (Match match in matches)
+                {
+                    string currmatch = match.Groups[1].Value;
+
+                    string ImgLink = Regex.Match(currmatch, "(?<=economy/image/)(.*)(?=/38fx38f)").ToString();
+
+                    //If you need:
+                    //string assetid = Regex.Match(currmatch, "(?<='mylisting', ')(.*)(?=\" class=\"item_market)").ToString();
+                    //assetid = assetid.Substring(assetid.Length - 11, 9); 
+
+                    string listId = Regex.Match(currmatch, "(?<=mylisting_)(.*)(?=_image\" src=)").ToString();
+
+                    string appidRaw = Regex.Match(currmatch, "(?<=market_listing_item_name_link)(.*)(?=</a></span>)").ToString();
+                    string pageLnk = Regex.Match(appidRaw, "(?<=href=\")(.*)(?=\">)").ToString();
+
+                    string captainPrice = Regex.Match(currmatch, @"(?<=>
+						)(.*)(?=					</span>
+					<br>)", RegexOptions.Singleline).ToString();
+
+                    captainPrice = GetSweetPrice(Regex.Replace(captainPrice, Main.currencies.GetAscii(), string.Empty).Trim());
+
+                    string[] LinkName = Regex.Match(currmatch, "(?<=_name_link\" href=\")(.*)(?=</a></span><br/>)").ToString().Split(new string[] { "\">" }, StringSplitOptions.None);
+
+                    string ItemType = Regex.Match(currmatch, "(?<=_listing_game_name\">)(.*)(?=</span>)").ToString();
+
+                    inventList.Add(new InventItem(listId, LinkName[1], ItemType, captainPrice, ImgLink, string.Empty, true, true, pageLnk));
+                }
+            }
+            //else
+            //TODO. Add correct error processing
+            //MessageBox.Show(Strings.OnSaleErr, Strings.Error, MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+            return matches.Count;
+        }
+
+    }
+}*/
